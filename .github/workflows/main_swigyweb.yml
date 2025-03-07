@@ -26,19 +26,27 @@ jobs:
           name: ssh-key
           path: ~/.ssh/id_rsa
 
-       # ✅ Login to Azure (Fixed JSON format)
+      # ✅ Login to Azure
       - name: Login to Azure
         uses: azure/login@v1
         with:
           creds: '${{ secrets.AZURE_CREDENTIALS }}'
-          
-
 
       # ✅ Ensure Resource Group Exists
       - name: Ensure Resource Group Exists
-        run: az group create --name python-rg --location eastus --output none || true
+        run: |
+          az group create --name python-rg --location eastus --output none || true
 
-      # ✅ Ensure Virtual Machine Exists
+      # ✅ Check Available Public IPs
+      - name: Check Public IP Quota
+        run: |
+          existing_ips=$(az network public-ip list --query "[].ipAddress" --output tsv)
+          echo "Existing Public IPs: $existing_ips"
+          if [[ -z "$existing_ips" ]]; then
+            echo "No available public IPs, VM creation may fail due to quota limits."
+          fi
+
+      # ✅ Ensure Virtual Machine Exists (Reuse Public IP if Needed)
       - name: Ensure Virtual Machine Exists
         run: |
           if ! az vm show --resource-group python-rg --name sample-123 --query 'name' --output tsv; then
@@ -52,12 +60,19 @@ jobs:
               --output none
           fi
 
+      # ✅ Get NSG Name Dynamically
+      - name: Get NSG Name
+        run: |
+          NSG_NAME=$(az network nsg list --resource-group python-rg --query "[0].name" --output tsv)
+          echo "NSG Name: $NSG_NAME"
+          echo "NSG_NAME=$NSG_NAME" >> $GITHUB_ENV
+
       # ✅ Ensure Security Group Allows SSH (22) and Node.js (3000)
       - name: Open Ports 22 and 3000 in Security Group
         run: |
           az network nsg rule create \
             --resource-group python-rg \
-            --nsg-name sample-123NSG \
+            --nsg-name ${{ env.NSG_NAME }} \
             --name AllowSSH \
             --priority 1000 \
             --direction Inbound \
@@ -68,7 +83,7 @@ jobs:
 
           az network nsg rule create \
             --resource-group python-rg \
-            --nsg-name sample-123NSG \
+            --nsg-name ${{ env.NSG_NAME }} \
             --name AllowNodeApp \
             --priority 1010 \
             --direction Inbound \
@@ -113,7 +128,7 @@ jobs:
       - name: Verify SSH Connection
         run: ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa azureuser@${{ env.ip }} "echo SSH Connection Successful"
 
-      # ✅ Copy Application Files to VM and Run Python App
+      # ✅ Deploy and Run Python App
       - name: Deploy and Run Python App
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa azureuser@${{ env.ip }} << 'EOF'
@@ -125,7 +140,7 @@ jobs:
           cd ~/python-app
 
           # Fetch the application code from GitHub
-          git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git . || git pull
+          git clone https://${{ secrets.TOKEN_GITHUB }}@github.com/manoj7894/Sample-Python-App.git . || git pull
 
           # Install required dependencies
           pip3 install --upgrade pip
