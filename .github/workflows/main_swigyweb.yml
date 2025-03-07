@@ -90,7 +90,7 @@ jobs:
             --access Allow \
             --protocol Tcp \
             --source-port-ranges '*' \
-            --destination-port-ranges 3000 || true
+            --destination-port-ranges 8000 || true
 
       # ✅ Get VM Public IP
       - name: Get VM Public IP
