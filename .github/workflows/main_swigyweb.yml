@@ -1,0 +1,134 @@
+name: Deploy Node.js App to Azure VM
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # ✅ Generate SSH Key Pair
+      - name: Generate SSH Key Pair
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
+          chmod 600 ~/.ssh/id_rsa
+
+      # ✅ Upload SSH Key as Artifact
+      - name: Upload SSH Key as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-key
+          path: ~/.ssh/id_rsa
+
+      # ✅ Login to Azure (Fixed JSON format)
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: '${{ secrets.AZURE_CREDENTIALS }}'
+
+      # ✅ Ensure Resource Group Exists
+      - name: Ensure Resource Group Exists
+        run: az group create --name python-rg --location eastus --output none || true
+
+      # ✅ Ensure Virtual Machine Exists
+      - name: Ensure Virtual Machine Exists
+        run: |
+          if ! az vm show --resource-group python-rg --name python-vm --query 'name' --output tsv; then
+            az vm create \
+              --resource-group python-rg \
+              --name python-vm \
+              --image Ubuntu2204 \
+              --admin-username azureuser \
+              --public-ip-sku Standard \
+              --size Standard_B2s \
+              --output none
+          fi
+
+      # ✅ Ensure Security Group Allows SSH (22) and Node.js (3000)
+      - name: Open Ports 22 and 3000 in Security Group
+        run: |
+          az network nsg rule create \
+            --resource-group python-rg \
+            --nsg-name python-vmNSG \
+            --name AllowSSH \
+            --priority 1000 \
+            --direction Inbound \
+            --access Allow \
+            --protocol Tcp \
+            --source-port-ranges '*' \
+            --destination-port-ranges 22 || true
+
+          az network nsg rule create \
+            --resource-group python-rg \
+            --nsg-name python-vmNSG \
+            --name AllowNodeApp \
+            --priority 1010 \
+            --direction Inbound \
+            --access Allow \
+            --protocol Tcp \
+            --source-port-ranges '*' \
+            --destination-port-ranges 3000 || true
+
+      # ✅ Get VM Public IP
+      - name: Get VM Public IP
+        run: |
+          ip=$(az vm list-ip-addresses \
+            --resource-group python-rg \
+            --name python-vm \
+            --query "[].virtualMachine.network.publicIpAddresses[0].ipAddress" \
+            --output tsv)
+          echo "VM Public IP: $ip"
+          echo "ip=$ip" >> $GITHUB_ENV
+
+      # ✅ Download SSH Key from Artifact
+      - name: Download SSH Key from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ssh-key
+          path: ~/.ssh
+
+      # ✅ Set Correct Permissions for SSH Key
+      - name: Set Correct Permissions for SSH Key
+        run: chmod 600 ~/.ssh/id_rsa
+
+      # ✅ Manually Add SSH Public Key to VM
+      - name: Manually Add SSH Public Key to VM
+        run: |
+          PUBLIC_KEY=$(cat ~/.ssh/id_rsa.pub)
+          az vm run-command invoke \
+            --resource-group python-rg \
+            --name python-vm \
+            --command-id RunShellScript \
+            --scripts "mkdir -p /home/azureuser/.ssh && echo \"$PUBLIC_KEY\" >> /home/azureuser/.ssh/authorized_keys && chmod 600 /home/azureuser/.ssh/authorized_keys && chown azureuser:azureuser /home/azureuser/.ssh/authorized_keys"
+
+      # ✅ Verify SSH Connection
+      - name: Verify SSH Connection
+        run: ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa azureuser@${{ env.ip }} "echo SSH Connection Successful"
+
+      # ✅ Copy Application Files to VM and Run Python App
+      - name: Deploy and Run Python App
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa azureuser@${{ env.ip }} << 'EOF'
+          # Update and install dependencies
+          sudo apt update && sudo apt install -y python3 python3-pip
+
+          # Create application directory
+          mkdir -p ~/python-app
+          cd ~/python-app
+
+          # Fetch the application code from GitHub
+          git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git . || git pull
+
+          # Install required dependencies
+          pip3 install --upgrade pip
+          pip3 install -r requirements.txt
+
+          # Run the application in the background
+          nohup python3 app.py > app.log 2>&1 &
+          EOF
