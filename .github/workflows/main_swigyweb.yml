@@ -41,10 +41,10 @@ jobs:
       # ✅ Ensure Virtual Machine Exists
       - name: Ensure Virtual Machine Exists
         run: |
-          if ! az vm show --resource-group python-rg --name python-vm --query 'name' --output tsv; then
+          if ! az vm show --resource-group python-rg --name sample-123 --query 'name' --output tsv; then
             az vm create \
               --resource-group python-rg \
-              --name python-vm \
+              --name sample-123 \
               --image Ubuntu2204 \
               --admin-username azureuser \
               --public-ip-sku Standard \
@@ -57,7 +57,7 @@ jobs:
         run: |
           az network nsg rule create \
             --resource-group python-rg \
-            --nsg-name python-vmNSG \
+            --nsg-name sample-123NSG \
             --name AllowSSH \
             --priority 1000 \
             --direction Inbound \
@@ -68,7 +68,7 @@ jobs:
 
           az network nsg rule create \
             --resource-group python-rg \
-            --nsg-name python-vmNSG \
+            --nsg-name sample-123NSG \
             --name AllowNodeApp \
             --priority 1010 \
             --direction Inbound \
@@ -82,7 +82,7 @@ jobs:
         run: |
           ip=$(az vm list-ip-addresses \
             --resource-group python-rg \
-            --name python-vm \
+            --name sample-123 \
             --query "[].virtualMachine.network.publicIpAddresses[0].ipAddress" \
             --output tsv)
           echo "VM Public IP: $ip"
@@ -105,7 +105,7 @@ jobs:
           PUBLIC_KEY=$(cat ~/.ssh/id_rsa.pub)
           az vm run-command invoke \
             --resource-group python-rg \
-            --name python-vm \
+            --name sample-123 \
             --command-id RunShellScript \
             --scripts "mkdir -p /home/azureuser/.ssh && echo \"$PUBLIC_KEY\" >> /home/azureuser/.ssh/authorized_keys && chmod 600 /home/azureuser/.ssh/authorized_keys && chown azureuser:azureuser /home/azureuser/.ssh/authorized_keys"
 
